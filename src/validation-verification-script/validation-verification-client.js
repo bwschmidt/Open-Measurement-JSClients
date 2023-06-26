@@ -4,6 +4,12 @@ const {AdEventType} = goog.require('omid.common.constants');
 const VerificationClient = goog.require('omid.verificationClient.VerificationClient');
 const {resolveGlobalContext} = goog.require('omid.common.windowUtils');
 
+let supplyParter;
+let txn_state;
+let bundle;
+let auid;
+let trax_id;
+let imp = false;
 /**
  * OMID ValidationVerificationClient.
  * Simple validation script example.
@@ -23,42 +29,68 @@ class ValidationVerificationClient {
         /** @private {VerificationClient} */
         this.verificationClient_ = verificationClient;
         const isSupported = this.verificationClient_.isSupported();
-        const supplyParter = this.getSupplyParter();
-        this.sendBeacon_("omid_loaded", supplyParter);
+        this.getData();
 
-        if (isSupported) {
-            this.verificationClient_.addEventListener(AdEventType.IMPRESSION, (event) => {
-                this.sendBeacon_("omid_imp", supplyParter);
-            });
-            let pixelInView = false;
-            let onScreenGeometry = false;
-            this.verificationClient_.addEventListener(AdEventType.GEOMETRY_CHANGE, (event) => {
-                if (!pixelInView && event.data && event.data.adView && event.data.adView.pixelsInView) {
-                    this.sendBeacon_("omid_pixel", supplyParter);
-                    pixelInView = true;
-                }
-                if (!onScreenGeometry && event.data && event.data.adView && event.data.adView.onScreenGeometry &&
-                    event.data.adView.onScreenGeometry.height > 0 && event.data.adView.onScreenGeometry.width > 0) {
-                    this.sendBeacon_("omid_geo", supplyParter);
-                    onScreenGeometry = true;
-                }
-            });
+        // if imp exists we will fire impression on geoChange unless OMID ends up being not supported
+        // in which case we fire it immediately
+        if (imp) {
+            if (isSupported) {
+                let onScreenGeometry = false;
+                this.verificationClient_.addEventListener(AdEventType.GEOMETRY_CHANGE, (event) => {
+                    if (!onScreenGeometry && event.data && event.data.adView && event.data.adView.onScreenGeometry &&
+                        event.data.adView.onScreenGeometry.height > 0 && event.data.adView.onScreenGeometry.width > 0) {
+                        this.sendImpression_(imp);
+                        onScreenGeometry = true;
+                    }
+                });
+            } else {
+                this.sendImpression_(imp);
+            }
+        // if we are not firing an impression we enable testing mode where we emit events to collect
+        // data on possible impression counting options
         } else {
-            this.sendBeacon_("omid_no", supplyParter);
-        }
+            if (isSupported) {
+                this.sendBeacon_("omid_loaded");
+                this.verificationClient_.addEventListener(AdEventType.IMPRESSION, (event) => {
+                    this.sendBeacon_("omid_imp");
+                });
+                let pixelInView = false;
+                let onScreenGeometry = false;
+                this.verificationClient_.addEventListener(AdEventType.GEOMETRY_CHANGE, (event) => {
+                    if (!pixelInView && event.data && event.data.adView && event.data.adView.pixelsInView) {
+                        this.sendBeacon_("omid_pixel");
+                        pixelInView = true;
+                    }
+                    if (!onScreenGeometry && event.data && event.data.adView && event.data.adView.onScreenGeometry &&
+                        event.data.adView.onScreenGeometry.height > 0 && event.data.adView.onScreenGeometry.width > 0) {
+                        this.sendBeacon_("omid_geo");
+                        onScreenGeometry = true;
+                    }
+                });
+            } else {
+                this.sendBeacon_("omid_no");
+            }
+    }
     }
 
-    getSupplyParter() {
+    getData() {
         const global = resolveGlobalContext();
         if (global && global.document && global.document.currentScript && global.document.currentScript.getAttribute('data-ox-sp')) {
-            return global.document.currentScript.getAttribute('data-ox-sp');
-        } else {
-            return "dds"
+            supplyParter = global.document.currentScript.getAttribute('data-ox-sp');
+            txn_state = global.document.currentScript.getAttribute('data-ox-txn-state');
+            trax_id = global.document.currentScript.getAttribute('data-ox-trax-id');
+            bundle = global.document.currentScript.getAttribute('data-ox-bundle');
+            auid = global.document.currentScript.getAttribute('data-ox-auid');
+            imp = global.document.currentScript.getAttribute('data-ox-imp');
         }
     }
 
-    sendBeacon_(type, supplyParter) {
-        this.verificationClient_.sendUrl("https://rtb.openx.net/test/"+supplyParter+"?s="+type);
+    sendBeacon_(type) {
+        fetch("https://privacysandbox-reporting.openx.net/ct?sp="+supplyParter+"&type="+type+"&bundle="+encodeURIComponent(bundle)+"&auid="+auid+"&trax_id="+trax_id+"&txn_state="+txn_state, {method: "POST", mode: "no-cors"})
+    }
+
+    sendImpression_(url) {
+        fetch(url, {method: "GET", mode: "no-cors"})
     }
 }
 exports = ValidationVerificationClient;
